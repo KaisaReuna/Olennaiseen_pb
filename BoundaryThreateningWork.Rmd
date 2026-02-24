@@ -1,0 +1,846 @@
+---
+title: "Boundary-Threatening Work Pressure Among Knowledge"
+output: html_notebook
+---
+
+Data: Statistics Finland’s 2023 Quality of Work Life Survey
+
+```{r}
+library(haven)
+library(survey)
+library(srvyr)
+library(ggplot2)
+library(GGally)
+library(randomForest)
+library(caret)
+library(glmnet)
+library(rpart)
+library(rpart.plot)
+library(psych)
+
+#Data
+
+tyo23palvelu <- read_sas("O:/Olennaiseen/data/TOT/tyo23.sas7bdat",
+NULL)
+
+
+#uudelleen koodaus
+tyo23palvelu$kkoul_astunt <- NA
+tyo23palvelu$kkoul_astunt[tyo23palvelu$ammatti1>3] <- "Työntekijät"
+tyo23palvelu$kkoul_astunt[tyo23palvelu$ammatti1==2|tyo23palvelu$ammatti1==3] <- "Toimihenkilöt"
+tyo23palvelu$kkoul_astunt[tyo23palvelu$ammatti1<3&tyo23palvelu$ukaste4==3] <- "Korkeakoulutetut asiantuntijat"
+
+tyo23palvelu$sp_ed <- NA
+tyo23palvelu$sp_ed[tyo23palvelu$sukup=="1"] <- "mies"
+tyo23palvelu$sp_ed[tyo23palvelu$sukup=="2"] <- "nainen"
+tyo23palvelu$sp_ed <- factor(tyo23palvelu$sp_ed, levels = c("nainen","mies"))
+
+tyo23palvelu$ika_ed <- NA
+tyo23palvelu$ika_ed[tyo23palvelu$ika10=="18-24"|tyo23palvelu$ika10=="25-34"] <- "alle 35-v"
+tyo23palvelu$ika_ed[tyo23palvelu$ika10=="35-44"] <- "35-44-v"
+tyo23palvelu$ika_ed[tyo23palvelu$ika10=="45-54"] <- "45-54-v"
+tyo23palvelu$ika_ed[tyo23palvelu$ika10=="55-67"] <- "55-67-v"
+
+
+tyo23palvelu$sektori <- tyo23palvelu$omatyty
+tyo23palvelu$sektori[tyo23palvelu$sektori==9] <- NA
+tyo23palvelu$sektori[tyo23palvelu$sektori==1] <- "budjettivaltio"
+tyo23palvelu$sektori[tyo23palvelu$sektori==2] <- "yliopistot"
+tyo23palvelu$sektori[tyo23palvelu$sektori==3] <- "kunta"
+tyo23palvelu$sektori[tyo23palvelu$sektori==4] <- "yksityinen"
+tyo23palvelu$sektori[tyo23palvelu$sektori==5] <- "kolmas sektori"
+tyo23palvelu$sektori[tyo23palvelu$sektori==6] <- "hyvinvointialue tai -kuntayhtymä"
+
+tyo23palvelu$sektori01 <- NA
+tyo23palvelu$sektori01[tyo23palvelu$omatyty==1|tyo23palvelu$omatyty==2|tyo23palvelu$omatyty==3|tyo23palvelu$omatyty==6] <- "julkinen"
+tyo23palvelu$sektori01[tyo23palvelu$omatyty==4|tyo23palvelu$omatyty==5] <- "yksityinen"
+
+tyo23palvelu$tyo_koko_kaikki <- tyo23palvelu$A14
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==99999999] <- NA
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==1] <- "1 – 4 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==2] <- "5 – 9 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==3] <- "10 – 19 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==4] <- "20 – 29 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==5] <- "30 – 49 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==6] <- "50 – 99 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==7] <- "100 – 199 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==8] <- "200 – 249 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==9] <- "250 – 499 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==10] <- "500 – 999 henkilöä"
+tyo23palvelu$tyo_koko_kaikki[tyo23palvelu$tyo_koko_kaikki==11] <- "1000 henkilöä tai enemmän"
+
+tyo23palvelu$tyo_koko_kaikki <- factor(tyo23palvelu$tyo_koko_kaikki, levels = c("1 – 4 henkilöä","5 – 9 henkilöä", "10 – 19 henkilöä", "20 – 29 henkilöä", "30 – 49 henkilöä", "50 – 99 henkilöä", "100 – 199 henkilöä", "200 – 249 henkilöä", "250 – 499 henkilöä", "500 – 999 henkilöä","1000 henkilöä tai enemmän"))
+
+tyo23palvelu$tyo_koko_oma <- tyo23palvelu$A15
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==99999999] <- NA
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==88888888] <- NA
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==1] <- "1 – 4 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==2] <- "5 – 9 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==3] <- "10 – 19 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==4] <- "20 – 29 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==5] <- "30 – 49 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==6] <- "50 – 99 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==7] <- "100 – 199 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==8] <- "200 – 249 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==9] <- "250 – 499 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==10] <- "500 – 999 henkilöä"
+tyo23palvelu$tyo_koko_oma[tyo23palvelu$tyo_koko_oma==11] <- "1000 henkilöä tai enemmän"
+
+tyo23palvelu$tyo_koko_oma <- factor(tyo23palvelu$tyo_koko_oma, levels = c("1 – 4 henkilöä","5 – 9 henkilöä", "10 – 19 henkilöä", "20 – 29 henkilöä", "30 – 49 henkilöä", "50 – 99 henkilöä", "100 – 199 henkilöä", "200 – 249 henkilöä", "250 – 499 henkilöä", "500 – 999 henkilöä","1000 henkilöä tai enemmän"))
+
+tyo23palvelu$osa_koko_tyo <- tyo23palvelu$taikao
+tyo23palvelu$osa_koko_tyo[tyo23palvelu$osa_koko_tyo==9] <- NA
+tyo23palvelu$osa_koko_tyo[tyo23palvelu$osa_koko_tyo==1] <- "kokoaikatyö"
+tyo23palvelu$osa_koko_tyo[tyo23palvelu$osa_koko_tyo==2] <- "osa-aikatyö"
+
+tyo23palvelu$tsuhde <- tyo23palvelu$A19
+tyo23palvelu$tsuhde[tyo23palvelu$tsuhde==88888888|tyo23palvelu$tsuhde==99999999] <- NA
+tyo23palvelu$tsuhde[tyo23palvelu$tsuhde==1] <- "toistaiseksi voimassaoleva"
+tyo23palvelu$tsuhde[tyo23palvelu$tsuhde==2] <- "määräaikainen"
+
+tyo23palvelu$esim <- tyo23palvelu$C12a
+tyo23palvelu$esim[tyo23palvelu$esim==88888888|tyo23palvelu$esim==99999999]<- NA
+tyo23palvelu$esim[tyo23palvelu$esim==1] <- "esihenkilö"
+tyo23palvelu$esim[tyo23palvelu$esim==2] <- "ei esihenkilo"
+
+tyo23palvelu$etatyo <- tyo23palvelu$B24
+tyo23palvelu$etatyo[tyo23palvelu$etatyo==88888888|tyo23palvelu$etatyo==99999999] <- NA
+tyo23palvelu$etatyo[tyo23palvelu$etatyo==1] <- "tekee etätyötä"
+tyo23palvelu$etatyo[tyo23palvelu$etatyo==2] <- "ei, mutta tehnyt aiemmin"
+tyo23palvelu$etatyo[tyo23palvelu$etatyo==3] <- "ei tee etätyötä"
+
+tyo23palvelu$etatyo01 <- NA
+tyo23palvelu$etatyo01[tyo23palvelu$B24==1] <- "tekee etätöitä"
+tyo23palvelu$etatyo01[tyo23palvelu$B24==2|tyo23palvelu$B24==3] <- "ei tee etätöitä"
+
+tyo23palvelu$etatyo_osuus <- tyo23palvelu$B_osuus
+tyo23palvelu$etatyo_osuus[tyo23palvelu$etatyo_osuus==88888888] <- NA
+tyo23palvelu$etatyo_osuus[tyo23palvelu$etatyo_osuus==1] <- "Lähes koko ajan"
+tyo23palvelu$etatyo_osuus[tyo23palvelu$etatyo_osuus==2] <- "Noin 3/4 ajasta"
+tyo23palvelu$etatyo_osuus[tyo23palvelu$etatyo_osuus==3] <- "Noin 1/2 ajasta"
+tyo23palvelu$etatyo_osuus[tyo23palvelu$etatyo_osuus==4] <- "Noin 1/4 ajasta"
+tyo23palvelu$etatyo_osuus[tyo23palvelu$etatyo_osuus==5] <- "Vähemmän"
+tyo23palvelu$etatyo_osuus[tyo23palvelu$etatyo_osuus==6] <- "Teen pelkästään etätyötä"
+
+tyo23palvelu$etatyo_osuus01 <- NA
+tyo23palvelu$etatyo_osuus01[tyo23palvelu$B_osuus==1|tyo23palvelu$B_osuus==2|tyo23palvelu$B_osuus==3|tyo23palvelu$B_osuus==6] <-  "etätyötä vähintään puolet ajasta"
+tyo23palvelu$etatyo_osuus01[tyo23palvelu$B_osuus==4|tyo23palvelu$B_osuus==5|tyo23palvelu$B24==2|tyo23palvelu$B24==3] <-  "etätyötä alle puolet ajasta"
+
+tyo23palvelu$alue <-NA
+tyo23palvelu$alue[tyo23palvelu$nuts2==2] <- "Helsinki-Uusimaa"
+tyo23palvelu$alue[tyo23palvelu$nuts2==1|tyo23palvelu$nuts2==3|tyo23palvelu$nuts2==4] <- "muu Suomi"
+
+
+
+tyo23palvelu$B31d[tyo23palvelu$B31d==88888888|tyo23palvelu$B31d==99999999] <- NA
+tyo23palvelu$B31e[tyo23palvelu$B31e==88888888|tyo23palvelu$B31e==99999999] <- NA
+tyo23palvelu$B31aa[tyo23palvelu$B31aa==88888888|tyo23palvelu$B31aa==99999999] <- NA
+tyo23palvelu$D16c[tyo23palvelu$D16c==88888888|tyo23palvelu$D16c==99999999] <- NA
+tyo23palvelu$D16i[tyo23palvelu$D16i==88888888|tyo23palvelu$D16i==99999999] <- NA
+tyo23palvelu$B27a[tyo23palvelu$B27a==88888888|tyo23palvelu$B27a==99999999] <- NA
+tyo23palvelu$B27c[tyo23palvelu$B27c==88888888|tyo23palvelu$B27c==99999999] <- NA
+tyo23palvelu$B27bb[tyo23palvelu$B27bb==88888888|tyo23palvelu$B27bb==99999999] <- NA
+tyo23palvelu$B27dd[tyo23palvelu$B27dd==88888888|tyo23palvelu$B27dd==99999999] <- NA
+tyo23palvelu$B27h[tyo23palvelu$B27h==88888888|tyo23palvelu$B27h==99999999] <- NA
+tyo23palvelu$B27i[tyo23palvelu$B27i==88888888|tyo23palvelu$B27i==99999999] <- NA
+tyo23palvelu$B27e[tyo23palvelu$B27e==88888888|tyo23palvelu$B27e==99999999] <- NA
+tyo23palvelu$B28[tyo23palvelu$B28==88888888|tyo23palvelu$B28==99999999] <- NA
+tyo23palvelu$C19b[tyo23palvelu$C19b==88888888|tyo23palvelu$C19b==99999999] <- NA
+tyo23palvelu$B16d[tyo23palvelu$B16d==88888888|tyo23palvelu$B16d==99999999] <- NA
+
+tyo23palvelu$C15a[tyo23palvelu$C15a==99999999] <- NA
+tyo23palvelu$C15f[tyo23palvelu$C15f==99999999] <- NA
+tyo23palvelu$C15j[tyo23palvelu$C15j==99999999] <- NA
+tyo23palvelu$C15k[tyo23palvelu$C15k==99999999] <- NA
+tyo23palvelu$C15L[tyo23palvelu$C15L==99999999|tyo23palvelu$C15L==88888888] <- NA
+tyo23palvelu$C16[tyo23palvelu$C16==99999999|tyo23palvelu$C16==88888888] <- NA
+tyo23palvelu$F6[tyo23palvelu$F6==99999999|tyo23palvelu$F6==88888888] <- NA
+tyo23palvelu$B38[tyo23palvelu$B38==99999999|tyo23palvelu$B38==88888888] <- NA
+tyo23palvelu$C12a[tyo23palvelu$C12a==99999999|tyo23palvelu$C12a==88888888] <- NA
+tyo23palvelu$B_psytur[tyo23palvelu$B_psytur==99999999|tyo23palvelu$B_psytur==88888888] <- NA
+tyo23palvelu$B_psytur1[tyo23palvelu$B_psytur>2] <- 0
+tyo23palvelu$B_psytur1[tyo23palvelu$B_psytur<3] <- 1
+tyo23palvelu$B_yhtei1[tyo23palvelu$B_yhtei>2] <- 0
+tyo23palvelu$B_yhtei1[tyo23palvelu$B_yhtei<3] <- 1
+tyo23palvelu$tyo_kulttuuri <- tyo23palvelu$B_yhtei1+tyo23palvelu$B_psytur1
+
+tyo23palvelu$C15a_1[tyo23palvelu$C15a>2] <- 0
+tyo23palvelu$C15f_1[tyo23palvelu$C15f>2] <- 0
+tyo23palvelu$C15j_1[tyo23palvelu$C15j>2] <- 0
+tyo23palvelu$C15k_1[tyo23palvelu$C15k>2] <- 0
+tyo23palvelu$C15L_1[tyo23palvelu$C15L>2] <- 0
+
+tyo23palvelu$C15a_1[tyo23palvelu$C15a<3] <- 1
+tyo23palvelu$C15f_1[tyo23palvelu$C15f<3] <- 1
+tyo23palvelu$C15j_1[tyo23palvelu$C15j<3] <- 1
+tyo23palvelu$C15k_1[tyo23palvelu$C15k<3] <- 1
+tyo23palvelu$C15L_1[tyo23palvelu$C15L<3] <- 1
+
+tyo23palvelu$esihenk_tyo <- tyo23palvelu$C15a_1+tyo23palvelu$C15f_1+tyo23palvelu$C15j_1+tyo23palvelu$C15k_1+tyo23palvelu$C15L_1
+
+
+tyo23palvelu$B31_tuki[tyo23palvelu$B31_tuki==88888888|tyo23palvelu$B31_tuki==99999999] <- NA
+tyo23palvelu$B31_tuki1 <- NA
+tyo23palvelu$B31_tuki1[tyo23palvelu$B31_tuki<3]<-1
+tyo23palvelu$B31_tuki1[tyo23palvelu$B31_tuki>2]<-0
+tyo23palvelu$B_yhtei[tyo23palvelu$B_yhtei==88888888|tyo23palvelu$B_yhtei==99999999] <- NA
+
+tyo23palvelu$B_AI1[tyo23palvelu$B_AI1==88888888|tyo23palvelu$B_AI1==99999999] <- NA
+tyo23palvelu$B31_AI[tyo23palvelu$B31_AI==88888888|tyo23palvelu$B31_AI==99999999] <- NA
+tyo23palvelu$B16i[tyo23palvelu$B16i==88888888|tyo23palvelu$B16i==99999999] <- NA
+tyo23palvelu$B16j[tyo23palvelu$B16j==88888888|tyo23palvelu$B16j==99999999] <- NA
+
+tyo23palvelu$B_kiire1[tyo23palvelu$B_kiire1==1] <- "kyllä"
+tyo23palvelu$B_kiire1[tyo23palvelu$B_kiire1==2] <- "ei"
+tyo23palvelu$B_kiire1[tyo23palvelu$B_kiire1==88888888|tyo23palvelu$B_kiire1==99999999] <- NA
+
+tyo23palvelu$B_hyva[tyo23palvelu$B_hyva==88888888|tyo23palvelu$B_hyva==99999999] <- NA
+
+tyo23palvelu$B16i[tyo23palvelu$B16i==1] <- "kyllä"
+tyo23palvelu$B16i[tyo23palvelu$B16i==2] <- "ei"
+
+tyo23palvelu$B16j[tyo23palvelu$B16j==1] <- "kyllä"
+tyo23palvelu$B16j[tyo23palvelu$B16j==2] <- "ei"
+
+tyo23palvelu$B_AI1_s<- NA
+tyo23palvelu$B_AI1_s[tyo23palvelu$B_AI1==1] <- "Kyllä, ja olen itse sen kanssa tekemisissä"
+tyo23palvelu$B_AI1_s[tyo23palvelu$B_AI1==2] <- "Kyllä, mutta en ole työssäni sen kanssa tekemisissä"
+tyo23palvelu$B_AI1_s[tyo23palvelu$B_AI1==3] <- "EI"
+
+tyo23palvelu$B31_AI_s<- NA
+tyo23palvelu$B31_AI_s[tyo23palvelu$B31_AI==1] <- "Pitää täysin paikkansa"
+tyo23palvelu$B31_AI_s[tyo23palvelu$B31_AI==2] <- "Pitää jokseenkin paikkansa"
+tyo23palvelu$B31_AI_s[tyo23palvelu$B31_AI==3] <- "Ei juurikaan pidä paikkaansa"
+tyo23palvelu$B31_AI_s[tyo23palvelu$B31_AI==4] <- "Ei pidä lainkaan paikkaansa"  
+
+tyo23palvelu$B_kuor1[tyo23palvelu$B_kuor1==88888888|tyo23palvelu$B_kuor1==99999999] <- NA
+tyo23palvelu$B_kuor4[tyo23palvelu$B_kuor4==88888888|tyo23palvelu$B_kuor4==99999999] <- NA
+tyo23palvelu$B_kuor2[tyo23palvelu$B_kuor2==88888888|tyo23palvelu$B_kuor2==99999999] <- NA
+tyo23palvelu$B_kuor5[tyo23palvelu$B_kuor5==88888888|tyo23palvelu$B_kuor5==99999999] <- NA
+
+### ylipursuamisen muuttujat
+## aikapaine: B31d, C19b, B_kiire1, B_kiire2
+tyo23palvelu$B31d_01 <- NA
+tyo23palvelu$B31d_01[tyo23palvelu$B31d>2] <-0
+tyo23palvelu$B31d_01[tyo23palvelu$B31d==1|tyo23palvelu$B31d==2] <- 1
+
+tyo23palvelu$C19b_01 <- NA
+tyo23palvelu$C19b_01[tyo23palvelu$C19b>2] <- 0
+tyo23palvelu$C19b_01[tyo23palvelu$C19b==2|tyo23palvelu$C19b==1] <- 1
+
+tyo23palvelu$B_kiire1_01[tyo23palvelu$B_kiire1=="kyllä"] <- 1
+tyo23palvelu$B_kiire1_01[tyo23palvelu$B_kiire1=="ei"] <- 0
+
+tyo23palvelu$B_kiire2_01 <- NA
+tyo23palvelu$B_kiire2_01[tyo23palvelu$B_kiire2>2] <- 0
+tyo23palvelu$B_kiire2_01[tyo23palvelu$B_kiire2<3|tyo23palvelu$B_kiire1==1] <- 1
+
+#aikapaine
+tyo23palvelu$aikapaine01 <- tyo23palvelu$B31d_01
+
+tyo23palvelu$aikapaine_2 <- NA
+tyo23palvelu$aikapaine_2[tyo23palvelu$B31d>1] <-0
+tyo23palvelu$aikapaine_2[tyo23palvelu$B31d==1] <- 1
+
+tyo23palvelu$B31d_kaan <- 5-tyo23palvelu$B31d
+
+##työn laajeneminen: B31e
+tyo23palvelu$t_laajeneminen <- NA
+tyo23palvelu$t_laajeneminen[tyo23palvelu$B31e>2] <- 0
+tyo23palvelu$t_laajeneminen[tyo23palvelu$B31e==2|tyo23palvelu$B31e==1] <- 1
+
+tyo23palvelu$B31e_kaan <- 5-tyo23palvelu$B31e
+
+tyo23palvelu$t_laajeneminen2 <- NA
+tyo23palvelu$t_laajeneminen2[tyo23palvelu$B31e>1] <- 0
+tyo23palvelu$t_laajeneminen2[tyo23palvelu$B31e==1] <- 1
+
+#työasioista murehtiminen
+tyo23palvelu$t_murehtiminen <- NA
+tyo23palvelu$t_murehtiminen[tyo23palvelu$B31aa>2] <- 0
+tyo23palvelu$t_murehtiminen[tyo23palvelu$B31aa==1|tyo23palvelu$B31aa==2] <- 1
+
+tyo23palvelu$t_murehtiminen2 <- NA
+tyo23palvelu$t_murehtiminen2[tyo23palvelu$B31aa>1] <- 0
+tyo23palvelu$t_murehtiminen2[tyo23palvelu$B31aa==1] <- 1
+
+tyo23palvelu$B31aa_kaan <- 5 - tyo23palvelu$B31aa
+
+## Kaikki yhdessä
+
+tyo23palvelu$t_paine <- tyo23palvelu$t_murehtiminen+tyo23palvelu$t_laajeneminen+tyo23palvelu$aikapaine01
+
+tyo23palvelu$t_paine_all <- NA
+tyo23palvelu$t_paine_all[tyo23palvelu$t_paine<3] <- 0
+tyo23palvelu$t_paine_all[tyo23palvelu$t_paine==3] <- 1
+
+tyo23palvelu$t_paine_hrd <- tyo23palvelu$t_murehtiminen2+tyo23palvelu$t_laajeneminen2+tyo23palvelu$aikapaine_2
+
+tyo23palvelu$t_paine_all2 <- NA
+tyo23palvelu$t_paine_all2[tyo23palvelu$t_paine_hrd<3] <- 0
+tyo23palvelu$t_paine_all2[tyo23palvelu$t_paine_hrd==3] <- 1
+
+tyo23palvelu$t_paine_cont <- tyo23palvelu$B31aa_kaan+tyo23palvelu$B31e_kaan+tyo23palvelu$B31d_kaan
+
+#ammattilabels
+tyo23palvelu$ammatti_nm <- NA
+tyo23palvelu$ammatti_nm[tyo23palvelu$ammatti2==10] <- "Johtajat"
+tyo23palvelu$ammatti_nm[tyo23palvelu$ammatti2==21] <- "Luonnontieteiden ja tekniikka"
+tyo23palvelu$ammatti_nm[tyo23palvelu$ammatti2==22] <- "Terveydenhuolto"
+tyo23palvelu$ammatti_nm[tyo23palvelu$ammatti2==23] <- "Opettajat ja muut opetusala"
+tyo23palvelu$ammatti_nm[tyo23palvelu$ammatti2==24] <- "Liike-elämän ja hallinto"
+tyo23palvelu$ammatti_nm[tyo23palvelu$ammatti2==25] <- "Tieto- ja viestintäteknologia"
+tyo23palvelu$ammatti_nm[tyo23palvelu$ammatti2==26] <- "Lainopilliset, sosiaalialan ja kulttuuriala"
+
+
+tyo23palvelu$klusteri <- NA
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==99] <- "4.Johtajat & terveydenhuolto"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==1] <- "2.Viestintä, luonnontiede & liike-elämä"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==2] <- "1.Tekniikka, laki & yhteiskunta-ala"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==3] <- "4.Johtajat & terveydenhuolto"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==4] <- "1.Tekniikka, laki & yhteiskunta-ala"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==5] <- "4.Johtajat & terveydenhuolto"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==6] <- "4.Johtajat & terveydenhuolto"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==7] <- "3.Opetusala"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==8] <- "3.Opetusala"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==9] <- "3.Opetusala"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==10] <- "1.Tekniikka, laki & yhteiskunta-ala"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==11] <- "4.Johtajat & terveydenhuolto"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==12] <- "2.Viestintä, luonnontiede & liike-elämä"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==13] <- "2.Viestintä, luonnontiede & liike-elämä"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==14] <- "2.Viestintä, luonnontiede & liike-elämä"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==15] <- "1.Tekniikka, laki & yhteiskunta-ala"
+tyo23palvelu$klusteri[tyo23palvelu$ammatti3==16] <- "1.Tekniikka, laki & yhteiskunta-ala"
+
+#ammatti3labels
+tyo23palvelu$ammatti3_nm <- NA
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==99] <- "Managers"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==1] <- "Physical, Earth and Life Science, Mathematicians"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==2] <- "Engineering"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==3] <- "Electrotechnology Engineers"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==4] <- "Architects, Planners, Surveyors"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==5] <- "Medical Doctors"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==6] <- "Other Health Prof."
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==7] <- "University and HE Teachers"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==8] <- "Secondary Education Teachers"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==9] <- "Primary School and ECE Teachers"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==10] <- "Other Teaching Prof."
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==11] <- "Finance"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==12] <- "Administration"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==13] <- "Sales, Marketing and PR"
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==14] <- "Software Developers, Database and Network Prof."
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==15] <- "Legal,Social and Religious Prof."
+tyo23palvelu$ammatti3_nm[tyo23palvelu$ammatti3==16] <- "Librarians, Curators, Journalists, Artists"
+
+###
+
+kkoul <- tyo23palvelu[which(tyo23palvelu$kkoul_astunt=="Korkeakoulutetut asiantuntijat"),]
+kk_fe <- kkoul[which(kkoul$sp_ed=="nainen"),]
+kk_ma <- kkoul[which(kkoul$sp_ed=="mies"),]
+  
+#otetaan huomioon painot analyysissä
+tot23 <- svydesign(id=~kohdeno, weights=~analyysipaino, nest=F, data=tyo23palvelu)
+kko <- svydesign(id=~kohdeno, weights=~analyysipaino, nest=F, data=kkoul)
+
+kko_fe <- svydesign(id=~kohdeno, weights=~analyysipaino, nest=F, data=kk_fe)
+kko_ma <- svydesign(id=~kohdeno, weights=~analyysipaino, nest=F, data=kk_ma)
+
+```
+
+
+
+### Katsotaan tulkosia ammattiryhmittäin
+
+```{r}
+isco_kkkoul_neg <- kkoul %>%
+  as_survey_design(weights = c(analyysipaino)) %>%
+  group_by(ammatti_nm) %>%
+  summarize(t_paine = survey_mean(t_paine, na.rm = T),t_murehtiminen = survey_mean(t_murehtiminen, na.rm = T),aikapaine01 = survey_mean(aikapaine01, na.rm = T), t_laajeneminen = survey_mean(t_laajeneminen, na.rm = T))
+isco_sh <- isco_kkkoul_neg[c("ammatti_nm","t_paine","aikapaine01","t_murehtiminen",  "t_laajeneminen" )]
+names(isco_sh) <- c("Ammattiryhmä","t_paine","Aikapaine","Murehtiminen", "Laajeneminen" )
+isco_sh$Aikapaine <- isco_sh$Aikapaine*100
+isco_sh$Murehtiminen <- isco_sh$Murehtiminen*100
+isco_sh$Laajeneminen <- isco_sh$Laajeneminen*100
+```
+
+```{r}
+round(prop.table(svytable(~ammatti_nm, design = kko)),3)
+```
+
+
+```{r}
+round(prop.table(svytable(~t_murehtiminen+ammatti_nm,  design =kko), margin = 2),3)
+svychisq(~t_murehtiminen+ammatti_nm,  design =kko)
+```
+
+```{r}
+round(prop.table(svytable(~t_laajeneminen+ammatti_nm,  design =kko), margin = 2),3)
+svychisq(~t_laajeneminen+ammatti_nm,  design =kko)
+```
+
+
+```{r}
+round(prop.table(svytable(~aikapaine01+ammatti_nm,  design =kko), margin = 2),3)
+svychisq(~aikapaine01+ammatti_nm,  design =kko)
+```
+
+### Klusterointi
+
+
+```{r}
+## lasketaan tulokset ammattiryhmille
+amm_kaikki_kk_neg <- kkoul %>%
+  as_survey_design(weights = c(analyysipaino)) %>%
+  group_by(ammatti3_nm) %>%
+  summarize(laajeneminen_neg = survey_mean(t_laajeneminen, na.rm = T),murehtiminen_neg = survey_mean(t_murehtiminen, na.rm = T),aikapaine_neg = survey_mean(aikapaine01, na.rm = T), t_paine_all_neg = survey_mean(t_paine_all, na.rm = T))
+
+```
+
+```{r, fig.width=15, fig.height=10}
+## subset data ja na omit ja skaalaa
+
+kl_dat0 <- kkoul[c("t_laajeneminen", "t_murehtiminen", "aikapaine01")]
+
+kl_dat <- na.omit(kl_dat0)
+
+kldat <- scale(kl_dat)
+
+
+# Determine number of clusters
+wssk <- (nrow(amm_kaikki_kk_neg)-1)*sum(apply(amm_kaikki_kk_neg[c("laajeneminen_neg", "murehtiminen_neg", "aikapaine_neg")],2,var))
+for (i in 2:15) wssk[i] <- sum(kmeans(amm_kaikki_kk_neg[c("laajeneminen_neg", "murehtiminen_neg", "aikapaine_neg")],
+   centers=i)$withinss)
+plot(1:15, wssk, type="b", xlab="Number of Clusters",
+  ylab="Within groups sum of squares")
+
+## 4 klusteria
+
+# K-Means Cluster Analysis
+fitk <- kmeans(amm_kaikki_kk_neg[c("laajeneminen_neg", "murehtiminen_neg", "aikapaine_neg")], 4) # 4 cluster solution
+# get cluster means
+aggregate(amm_kaikki_kk_neg[c("laajeneminen_neg", "murehtiminen_neg", "aikapaine_neg")],by=list(fitk$cluster),FUN=mean)
+# append cluster assignment
+amm_kaikki_kk_neg <- data.frame(amm_kaikki_kk_neg, fitk$cluster)
+
+rname <- amm_kaikki_kk_neg$ammatti3_nm
+
+# ja hierarkkinen kluserti
+
+# Ward Hierarchical Clustering
+rownames(amm_kaikki_kk_neg) <- amm_kaikki_kk_neg$ammatti3_nm
+dk <- dist(amm_kaikki_kk_neg[c("laajeneminen_neg", "murehtiminen_neg", "aikapaine_neg")],
+method = "euclidean") # distance matrix
+fit_k <- hclust(dk, method="ward.D2")
+
+
+plot(fit_k, main = "Clustering dendogram", xlab="",ylab="distance" ) # display dendogram
+groups <- cutree(fit_k, k=4) # cut tree into 3 clusters
+
+```
+
+```{r}
+m_maara_tek <- aov(laajeneminen_neg ~ murehtiminen_neg + aikapaine_neg, data =amm_kaikki_kk_neg)
+
+summary(m_maara_tek)
+etaSquared(m_maara_tek)
+```
+
+```{r}
+kruskal.test(t_laajeneminen ~ ammatti3_nm, data = kkoul)
+```
+```{r}
+kruskal.test(t_murehtiminen ~ ammatti3_nm, data = kkoul)
+```
+```{r}
+kruskal.test(aikapaine01 ~ ammatti3_nm, data = kkoul)
+```
+
+```{r, fig.width=12, fig.height=7}
+klu_ammat_neg  <- kkoul %>%
+as_survey_design(weights = c(analyysipaino)) %>%
+group_by(klusteri) %>%
+summarize(percent_laajeneminen_neg = survey_mean(t_laajeneminen, na.rm = T),percent_murehtiminen_neg = survey_mean(t_murehtiminen, na.rm = T),percent_aikapaine_neg = survey_mean(aikapaine01, na.rm = T))
+
+# Select only the columns that do not end with "_Se"
+klu_ammat_neg2 <- klu_ammat_neg %>%
+select(-ends_with("_se"))
+# Reshape the data from wide to long format
+amm_summary_data_long <- klu_ammat_neg2 %>%
+pivot_longer(cols = starts_with("percent"), names_to = "variable", values_to = "percentage")
+amm_summary_data_long$percentage <- amm_summary_data_long$percentage*100
+# Reorder the variable_group factor levels
+amm_summary_data_long<- amm_summary_data_long %>%
+mutate(variable = factor(variable,
+levels = c("percent_aikapaine_neg","percent_laajeneminen_neg",  "percent_murehtiminen_neg")))
+```
+
+
+### Regressioanalyysi
+
+
+
+
+#### Puuregressio
+
+
+```{r, fig.width = 12, fig.height = 8}
+set.seed(205)
+#build the initial tree
+
+tree01 <- rpart(B31aa_kaan ~esim+sektori01+tsuhde+esihenk_tyo+tyo_kulttuuri+F6+etatyo_osuus01+B38+B31_tuki+klusteri+ika_ed+sp_ed, data=kkoul, control=rpart.control(cp=.0001))
+
+#identify best cp value to use
+best <- tree01$cptable[which.min(tree01$cptable[,"xerror"]),"CP"]
+
+#produce a pruned tree based on the best cp value
+pruned_tree01 <- prune(tree01, cp=best)
+
+#plot the pruned tree
+prp(pruned_tree01,
+    faclen=0, #use full names for factor labels
+    extra=1, #display number of obs. for each terminal node
+    roundint=F, #don't round to integers in output
+    digits=3) #display 5 decimal places in output
+
+```
+
+
+```{r}
+summary(pruned_tree01)
+```
+
+
+
+```{r, fig.width = 12, fig.height = 8}
+set.seed(205)
+#build the initial tree
+tree01 <- rpart(B31e_kaan ~esim+sektori01+tsuhde+esihenk_tyo+tyo_kulttuuri+F6+B38+B31_tuki+etatyo_osuus01+klusteri+ika_ed+sp_ed, data=kkoul, control=rpart.control(cp=.0001))
+
+#identify best cp value to use
+best <- tree01$cptable[which.min(tree01$cptable[,"xerror"]),"CP"]
+
+#produce a pruned tree based on the best cp value
+pruned_tree01 <- prune(tree01, cp=best)
+
+#plot the pruned tree
+prp(pruned_tree01,
+    faclen=0, #use full names for factor labels
+    extra=1, #display number of obs. for each terminal node
+    roundint=F, #don't round to integers in output
+    digits=3) #display 5 decimal places in output
+
+```
+
+
+```{r}
+summary(pruned_tree01)
+```
+
+
+
+```{r, fig.width = 12, fig.height = 8}
+set.seed(203)
+#build the initial tree
+tree01 <- rpart(t_paine_all ~esim+sektori01+tsuhde+esihenk_tyo+tyo_kulttuuri+F6+B38+B31_tuki+etatyo_osuus01+klusteri+ika_ed+sp_ed,  data=kkoul, control=rpart.control(cp=.0001))
+
+#identify best cp value to use
+best <- tree01$cptable[which.min(tree01$cptable[,"xerror"]),"CP"]
+
+#produce a pruned tree based on the best cp value
+pruned_tree01 <- prune(tree01, cp=best)
+
+#plot the pruned tree
+prp(pruned_tree01,
+    faclen=0, #use full names for factor labels
+    extra=1, #display number of obs. for each terminal node
+    roundint=F, #don't round to integers in output
+    digits=3) #display 5 decimal places in output
+
+```
+
+
+```{r}
+summary(pruned_tree01)
+```
+
+
+### N taulukot
+
+
+```{r}
+round(prop.table(svytable(~t_murehtiminen+ika_ed, design = kko),margin = 2),2)
+```
+
+```{r}
+svychisq(~t_murehtiminen+ika_ed, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_murehtiminen+ika_ed+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+```
+
+```{r}
+svychisq(~t_murehtiminen+ika_ed, design = kko_fe)
+svychisq(~t_murehtiminen+ika_ed, design = kko_ma)
+```
+
+
+```{r}
+round(prop.table(svytable(~t_laajeneminen+ika_ed, design = kko),margin = 2),2)
+svychisq(~t_laajeneminen+ika_ed, design = kko)
+```
+```{r}
+etest12 <-round(prop.table(svytable(~t_laajeneminen+ika_ed+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_laajeneminen+ika_ed, design = kko_fe)
+svychisq(~t_laajeneminen+ika_ed, design = kko_ma)
+```
+```{r}
+round(prop.table(svytable(~aikapaine01+ika_ed, design = kko),margin = 2),2)
+svychisq(~aikapaine01+ika_ed, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~aikapaine01+ika_ed+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~aikapaine01+ika_ed, design = kko_fe)
+svychisq(~aikapaine01+ika_ed, design = kko_ma)
+```
+
+
+```{r}
+round(prop.table(svytable(~aikapaine01+sektori01, design = kko),margin = 2),2)
+svychisq(~aikapaine01+sektori01, design = kko)
+```
+```{r}
+etest12 <-round(prop.table(svytable(~aikapaine01+sektori01+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~aikapaine01+sektori01, design = kko_fe)
+svychisq(~aikapaine01+sektori01, design = kko_ma)
+```
+
+
+
+```{r}
+round(prop.table(svytable(~t_laajeneminen+sektori01, design = kko),margin = 2),2)
+svychisq(~t_laajeneminen+sektori01, design = kko)
+```
+```{r}
+etest12 <-round(prop.table(svytable(~t_laajeneminen+sektori01+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_laajeneminen+sektori01, design = kko_fe)
+svychisq(~t_laajeneminen+sektori01, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~t_murehtiminen+sektori01, design = kko),margin = 2),2)
+svychisq(~t_murehtiminen+sektori01, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_murehtiminen+sektori01+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_murehtiminen+sektori01, design = kko_fe)
+svychisq(~t_murehtiminen+sektori01, design = kko_ma)
+```
+
+
+
+```{r}
+round(prop.table(svytable(~t_murehtiminen+ammatti_nm, design = kko),margin = 2),2)
+svychisq(~t_murehtiminen+ammatti_nm, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_murehtiminen+ammatti_nm+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_murehtiminen+ammatti_nm, design = kko_fe)
+svychisq(~t_murehtiminen+ammatti_nm, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~t_laajeneminen+ammatti_nm, design = kko),margin = 2),2)
+svychisq(~t_laajeneminen+ammatti_nm, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_laajeneminen+ammatti_nm+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_laajeneminen+ammatti_nm, design = kko_fe)
+svychisq(~t_laajeneminen+ammatti_nm, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~aikapaine01+ammatti_nm, design = kko),margin = 2),2)
+svychisq(~aikapaine01+ammatti_nm, design = kko)
+```
+```{r}
+etest12 <-round(prop.table(svytable(~aikapaine01+ammatti_nm+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~aikapaine01+ammatti_nm, design = kko_fe)
+svychisq(~aikapaine01+ammatti_nm, design = kko_ma)
+```
+
+
+
+
+
+
+```{r}
+round(prop.table(svytable(~t_murehtiminen+tsuhde, design = kko),margin = 2),2)
+svychisq(~t_murehtiminen+tsuhde, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_murehtiminen+tsuhde+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_murehtiminen+tsuhde, design = kko_fe)
+svychisq(~t_murehtiminen+tsuhde, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~t_laajeneminen+tsuhde, design = kko),margin = 2),2)
+svychisq(~t_laajeneminen+tsuhde, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_laajeneminen+tsuhde+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_laajeneminen+tsuhde, design = kko_fe)
+svychisq(~t_laajeneminen+tsuhde, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~aikapaine01+tsuhde, design = kko),margin = 2),2)
+svychisq(~aikapaine01+tsuhde, design = kko)
+```
+```{r}
+etest12 <-round(prop.table(svytable(~aikapaine01+tsuhde+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~aikapaine01+tsuhde, design = kko_fe)
+svychisq(~aikapaine01+tsuhde, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~t_murehtiminen+esim, design = kko),margin = 2),2)
+svychisq(~t_murehtiminen+esim, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_murehtiminen+esim+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_murehtiminen+esim, design = kko_fe)
+svychisq(~t_murehtiminen+esim, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~t_laajeneminen+esim, design = kko),margin = 2),2)
+svychisq(~t_laajeneminen+esim, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_laajeneminen+esim+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_laajeneminen+esim, design = kko_fe)
+svychisq(~t_laajeneminen+esim, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~aikapaine01+esim, design = kko),margin = 2),2)
+svychisq(~aikapaine01+esim, design = kko)
+```
+```{r}
+etest12 <-round(prop.table(svytable(~aikapaine01+esim+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~aikapaine01+esim, design = kko_fe)
+svychisq(~aikapaine01+esim, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~aikapaine01+etatyo_osuus01, design = kko),margin = 2),2)
+svychisq(~aikapaine01+etatyo_osuus01, design = kko)
+```
+```{r}
+etest12 <-round(prop.table(svytable(~aikapaine01+etatyo_osuus01+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~aikapaine01+etatyo_osuus01, design = kko_fe)
+svychisq(~aikapaine01+etatyo_osuus01, design = kko_ma)
+```
+
+```{r}
+round(prop.table(svytable(~t_laajeneminen+etatyo_osuus01, design = kko),margin = 2),2)
+svychisq(~t_laajeneminen+etatyo_osuus01, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_laajeneminen+etatyo_osuus01+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_laajeneminen+etatyo_osuus01, design = kko_fe)
+svychisq(~t_laajeneminen+etatyo_osuus01, design = kko_ma)
+```
+```{r}
+round(prop.table(svytable(~t_murehtiminen+etatyo_osuus01, design = kko),margin = 2),2)
+svychisq(~t_murehtiminen+etatyo_osuus01, design = kko)
+```
+
+```{r}
+etest12 <-round(prop.table(svytable(~t_murehtiminen+etatyo_osuus01+sp_ed, design = kko),margin = 2),3)
+round(prop.table(etest12,c(3,2)),2)
+
+svychisq(~t_murehtiminen+etatyo_osuus01, design = kko_fe)
+svychisq(~t_murehtiminen+etatyo_osuus01, design = kko_ma)
+```
+
+### Laske crobbachit
+
+
+```{r}
+alpha(kkoul[,c("C15a_1","C15f_1","C15j_1", "C15k_1","C15L_1" )])
+```
+```{r}
+alpha(kkoul[,c("B_yhtei1","B_psytur1")])
+```
+
+```{r}
+alpha(kkoul[,c("B31aa","B31e","B31d")])
+```
+
+
+
+##### Artikkelin lisätaulukot
+
+```{r}
+ika <- prop.table(table(kkoul$ika_ed))
+sp <- prop.table(table(kkoul$sp_ed))
+esim <- prop.table(table(kkoul$esim))
+sektori01<- prop.table(table(kkoul$sektori01))
+tsuhde<- prop.table(table(kkoul$tsuhde))
+esihenk_tyo<- prop.table(table(kkoul$esihenk_tyo))
+tyo_kulttuuri<- prop.table(table(kkoul$tyo_kulttuuri))
+ammatti3<- prop.table(table(kkoul$ammatti3_nm))
+etatyo_osuus01<- prop.table(table(kkoul$etatyo_osuus01))
+B31_tuki<- prop.table(table(kkoul$B31_tuki))
+B38<- prop.table(table(kkoul$B38))
+F6<- prop.table(table(kkoul$F6))
+
+#taulukot <- cbind(ika, esim, sp,esim,sektori01,tsuhde,esihenk_tyo,tyo_kulttuuri,ammatti3, etatyo_osuus01,B31_tuki,B38,F6)
+```
+
+
